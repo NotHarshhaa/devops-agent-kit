@@ -1,0 +1,66 @@
+# Prometheus Agent Pipeline
+# Orchestrates the Prometheus-focused drift detection agent.
+#
+# This pipeline monitors metrics, detects drift from expected
+# baselines, and surfaces anomalies.
+
+pipeline:
+  name: prometheus-agent
+  description: >
+    Prometheus-based drift detection and anomaly monitoring pipeline.
+    Compares current metric values against expected baselines and
+    historical trends to detect infrastructure drift.
+
+  agent: drift-detector
+  brain: autogen
+
+  # Prometheus connection settings
+  prometheus:
+    url: http://prometheus.monitoring.svc:9090
+
+  # Target namespaces
+  namespaces:
+    - default
+    - production
+
+  # Monitoring interval
+  interval: 10m
+
+  # Tool bindings used by this pipeline
+  tools:
+    - kubernetes/get_pod_status
+    - kubernetes/get_failing_pods
+    - argocd/get_app_sync_status
+    - argocd/list_out_of_sync_apps
+    - argocd/get_app_diff
+    - prometheus/query_metric
+    - prometheus/query_range
+    - prometheus/get_alerts_firing
+    - prometheus/get_error_rate
+
+  # Baseline metrics to compare against
+  baselines:
+    cpu_utilization:
+      query: "avg(rate(node_cpu_seconds_total{mode!='idle'}[5m])) * 100"
+      warning_threshold: 70
+      critical_threshold: 90
+    memory_utilization:
+      query: "avg(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100"
+      warning_threshold: 80
+      critical_threshold: 95
+    pod_restart_rate:
+      query: "sum(increase(kube_pod_container_status_restarts_total[1h]))"
+      warning_threshold: 5
+      critical_threshold: 20
+
+  # Notification channels (future)
+  notifications:
+    slack:
+      enabled: false
+      channel: "#infra-drift"
+    pagerduty:
+      enabled: false
+      severity: critical
+
+  # Schedule (cron format, for CI integration)
+  schedule: "*/10 * * * *"

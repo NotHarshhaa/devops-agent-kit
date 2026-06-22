@@ -1,0 +1,52 @@
+# Kubernetes Agent Pipeline
+# Orchestrates the Kubernetes-focused monitoring agent.
+#
+# This pipeline definition can be used by CI/CD systems or
+# the devops-agent CLI to run the infra-monitor agent with
+# Kubernetes tool bindings.
+
+pipeline:
+  name: k8s-agent
+  description: >
+    Kubernetes infrastructure monitoring pipeline.
+    Monitors pod health, deployment state, and node pressure
+    across target namespaces.
+
+  agent: infra-monitor
+  brain: autogen
+
+  # Target namespaces to monitor
+  namespaces:
+    - default
+    - kube-system
+    - production
+
+  # Monitoring interval
+  interval: 5m
+
+  # Tool bindings used by this pipeline
+  tools:
+    - kubernetes/get_pod_status
+    - kubernetes/describe_deployment
+    - kubernetes/get_failing_pods
+    - kubernetes/get_node_pressure
+    - prometheus/query_metric
+    - prometheus/get_alerts_firing
+
+  # Alert thresholds
+  thresholds:
+    max_failing_pods: 0
+    max_node_memory_pressure: false
+    max_restart_count: 5
+
+  # Notification channels (future)
+  notifications:
+    slack:
+      enabled: false
+      channel: "#devops-alerts"
+    pagerduty:
+      enabled: false
+      severity: warning
+
+  # Schedule (cron format, for CI integration)
+  schedule: "*/5 * * * *"

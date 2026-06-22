@@ -1,0 +1,51 @@
+# ArgoCD Agent Pipeline
+# Orchestrates the ArgoCD-focused deployment reviewer agent.
+#
+# This pipeline reviews pending ArgoCD syncs and validates
+# infrastructure health before approving rollouts.
+
+pipeline:
+  name: argocd-agent
+  description: >
+    ArgoCD deployment review pipeline.
+    Reviews pending syncs, checks health metrics, and provides
+    GO/NO-GO recommendations before approving deployments.
+
+  agent: deploy-reviewer
+  brain: langgraph
+
+  # ArgoCD connection settings
+  argocd:
+    server: https://argocd.example.com
+    insecure: false
+
+  # Applications to monitor (empty = all)
+  applications: []
+
+  # Tool bindings used by this pipeline
+  tools:
+    - argocd/get_app_sync_status
+    - argocd/list_out_of_sync_apps
+    - argocd/get_app_diff
+    - argocd/trigger_sync
+    - prometheus/query_metric
+    - prometheus/get_alerts_firing
+    - prometheus/get_error_rate
+
+  # Approval policy
+  approval:
+    # auto: approve automatically if all checks pass
+    # manual: always require human approval
+    # semi-auto: auto-approve if no warnings, manual if warnings
+    mode: semi-auto
+    max_error_rate_percent: 1.0
+    require_no_firing_alerts: true
+
+  # Notification channels (future)
+  notifications:
+    slack:
+      enabled: false
+      channel: "#deploy-reviews"
+
+  # Schedule (cron format, for CI integration)
+  schedule: "*/10 * * * *"

@@ -1,0 +1,30 @@
+# LangGraph Brain Configuration
+# Used by agents when --brain langgraph is specified.
+# See: https://langchain-ai.github.io/langgraph/
+
+# LLM model to use for reasoning
+model: gpt-4o
+
+# Sampling temperature — lower = more deterministic
+temperature: 0.2
+
+# Maximum number of graph recursions before stopping
+recursion_limit: 25
+
+# Checkpointer backend for state persistence
+# Options: memory, sqlite, postgres
+checkpointer: memory
+
+# Thread configuration for concurrent tool execution
+max_concurrency: 4
+
+# Timeout for individual LLM calls (seconds)
+timeout: 120
+
+# Retry configuration for API calls
+retry:
+  max_retries: 3
+  retry_delay: 2
+
+# Logging level for the LangGraph framework
+log_level: INFO
