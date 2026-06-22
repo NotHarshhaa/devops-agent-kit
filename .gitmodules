@@ -1,0 +1,6 @@
+[submodule "agent-brain/autogen"]
+	path = agent-brain/autogen
+	url = https://github.com/microsoft/autogen
+[submodule "agent-brain/langgraph"]
+	path = agent-brain/langgraph
+	url = https://github.com/langchain-ai/langgraph
