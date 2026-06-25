@@ -30,6 +30,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from tools.kubernetes import get_pod_status, describe_deployment, get_failing_pods
 from tools.argocd import get_app_sync_status, list_out_of_sync_apps, get_app_diff
+from tools.notifications import send_slack_message
 
 logger = logging.getLogger("drift-detector-agent")
 
@@ -77,6 +78,15 @@ TOOLS = [
         "function": get_app_diff,
         "parameters": {"app_name": {"type": "string", "required": True}},
     },
+    {
+        "name": "send_slack_message",
+        "description": "Send a message to a Slack channel using an incoming webhook",
+        "function": send_slack_message,
+        "parameters": {
+            "channel": {"type": "string", "required": True},
+            "text": {"type": "string", "required": True},
+        },
+    },
 ]
 
 SYSTEM_PROMPT = """You are a DevOps Drift Detection agent. Your job is to:
@@ -99,12 +109,12 @@ actionable recommendations.
 # ---------------------------------------------------------------------------
 
 
-def run_with_autogen(config: dict, namespace: str, dry_run: bool) -> None:
+def run_with_autogen(config: dict, namespace: str, dry_run: bool) -> str:
     """Run the drift detector agent using AutoGen as the brain."""
     logger.info("Starting drift-detector with AutoGen brain")
 
     try:
-        from autogen import AssistantAgent, UserProxyAgent
+        from autogen import AssistantAgent, UserProxyAgent  # type: ignore
     except ImportError:
         logger.error(
             "AutoGen not installed. Run: pip install -r agent-brain/autogen/"
@@ -144,17 +154,26 @@ def run_with_autogen(config: dict, namespace: str, dry_run: bool) -> None:
     if dry_run:
         task += " This is a DRY RUN — do not make any changes."
 
-    user_proxy.initiate_chat(assistant, message=task)
+    chat_result = user_proxy.initiate_chat(assistant, message=task)
+    try:
+        if hasattr(chat_result, 'chat_history') and chat_result.chat_history:
+            for msg in reversed(chat_result.chat_history):
+                if msg.get("role") in ("user", "assistant"):
+                    if msg.get("content"):
+                        return msg.get("content")
+        return str(chat_result)
+    except Exception:
+        return str(chat_result)
 
 
-def run_with_langgraph(config: dict, namespace: str, dry_run: bool) -> None:
+def run_with_langgraph(config: dict, namespace: str, dry_run: bool) -> str:
     """Run the drift detector agent using LangGraph as the brain."""
     logger.info("Starting drift-detector with LangGraph brain")
 
     try:
-        from langchain_core.tools import tool as langchain_tool
-        from langchain_openai import ChatOpenAI
-        from langgraph.prebuilt import create_react_agent
+        from langchain_core.tools import tool as langchain_tool  # type: ignore
+        from langchain_openai import ChatOpenAI  # type: ignore
+        from langgraph.prebuilt import create_react_agent  # type: ignore
     except ImportError:
         logger.error(
             "LangGraph not installed. Run: pip install langgraph langchain-openai"
@@ -188,10 +207,12 @@ def run_with_langgraph(config: dict, namespace: str, dry_run: bool) -> None:
         config={"recursion_limit": config.get("recursion_limit", 25)},
     )
 
-    # Print final response
+    output_parts = []
     for msg in result.get("messages", []):
         if hasattr(msg, "content") and msg.content:
-            print(msg.content)
+            output_parts.append(msg.content)
+
+    return "\n".join(output_parts)
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +239,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Enable verbose logging"
+    )
+    parser.add_argument(
+        "--pipeline", default="", help="Path to pipeline YAML configuration"
     )
     return parser.parse_args()
 
@@ -246,10 +270,33 @@ def main() -> None:
         args.brain,
     )
 
+    output = ""
     if args.brain == "autogen":
-        run_with_autogen(config, args.namespace, args.dry_run)
+        output = run_with_autogen(config, args.namespace, args.dry_run)
     elif args.brain == "langgraph":
-        run_with_langgraph(config, args.namespace, args.dry_run)
+        output = run_with_langgraph(config, args.namespace, args.dry_run)
+
+    # Print output for visibility if not already printed
+    print(output)
+
+    # Auto-post to Slack if configured in pipeline YAML
+    if args.pipeline:
+        try:
+            pipeline_path = Path(args.pipeline)
+            if pipeline_path.exists():
+                with open(pipeline_path) as f:
+                    pipeline_data = yaml.safe_load(f)
+                
+                pipeline_sec = pipeline_data.get("pipeline", {})
+                notifications = pipeline_sec.get("notifications", {})
+                slack_cfg = notifications.get("slack", {})
+                if slack_cfg.get("enabled", False):
+                    channel = slack_cfg.get("channel", "#alerts")
+                    logger.info("Sending notification to Slack channel %s", channel)
+                    msg_text = f"*Agent:* drift-detector (Brain: {args.brain})\n*Namespace:* {args.namespace}\n\n{output}"
+                    send_slack_message(channel, msg_text)
+        except Exception as exc:
+            logger.error("Failed to send automatic Slack notification: %s", exc)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,9 @@ package cmd
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,12 +28,107 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 }
 
+// checkPythonEnvironment checks Python interpreter and library presence.
+func checkPythonEnvironment() bool {
+	fmt.Print("  Python Environment ... ")
+	pyBin, err := resolvePython()
+	if err != nil {
+		fmt.Println("❌ Python not found in PATH")
+		return false
+	}
+
+	// Get Python version
+	versionBytes, err := exec.Command(pyBin, "--version").CombinedOutput()
+	versionStr := "unknown version"
+	if err == nil {
+		versionStr = strings.TrimSpace(string(versionBytes))
+	}
+
+	// Run package checks
+	pkgScript := `
+import importlib
+packages = {
+	"kubernetes": "kubernetes",
+	"requests": "requests",
+	"yaml": "pyyaml",
+	"prometheus_api_client": "prometheus-api-client",
+	"autogen": "autogen",
+	"langgraph": "langgraph"
+}
+missing = []
+installed = []
+for pkg, name in packages.items():
+	try:
+		importlib.import_module(pkg)
+		installed.append(name)
+	except ImportError:
+		missing.append(name)
+import sys
+print(f"installed:{','.join(installed)}|missing:{','.join(missing)}")
+`
+	out, err := exec.Command(pyBin, "-c", pkgScript).CombinedOutput()
+	if err != nil {
+		fmt.Printf("⚠️  failed to run dependency check: %v\n", err)
+		return false
+	}
+
+	outStr := strings.TrimSpace(string(out))
+	if !strings.Contains(outStr, "|") {
+		fmt.Printf("⚠️  unexpected check output: %q\n", outStr)
+		return false
+	}
+
+	parts := strings.Split(outStr, "|")
+	missingPart := strings.TrimPrefix(parts[1], "missing:")
+
+	var missing []string
+	if missingPart != "" {
+		missing = strings.Split(missingPart, ",")
+	}
+
+	if len(missing) > 0 {
+		fmt.Printf("⚠️  %s (Missing: %s)\n", versionStr, strings.Join(missing, ", "))
+		return false
+	}
+
+	fmt.Printf("✅ %s (all dependencies installed)\n", versionStr)
+	return true
+}
+
+// checkAPIKeys checks OpenAI API Key.
+func checkAPIKeys() bool {
+	fmt.Print("  LLM Credentials    ... ")
+	openAIKey := os.Getenv("OPENAI_API_KEY")
+	geminiKey := os.Getenv("GEMINI_API_KEY")
+
+	if openAIKey == "" && geminiKey == "" {
+		fmt.Println("⚠️  Neither OPENAI_API_KEY nor GEMINI_API_KEY is set (LLM brains will fail unless configured differently)")
+		return false
+	}
+
+	var keys []string
+	if openAIKey != "" {
+		keys = append(keys, "OPENAI_API_KEY")
+	}
+	if geminiKey != "" {
+		keys = append(keys, "GEMINI_API_KEY")
+	}
+	fmt.Printf("✅ configured (%s)\n", strings.Join(keys, ", "))
+	return true
+}
+
 // checkStatus verifies connectivity to each tool binding backend.
 func checkStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("🔍 devops-agent — checking tool binding health")
 	fmt.Println()
 
 	allHealthy := true
+
+	// Check Python Environment
+	allHealthy = checkPythonEnvironment() && allHealthy
+
+	// Check API Credentials
+	allHealthy = checkAPIKeys() && allHealthy
 
 	// Check Kubernetes
 	allHealthy = checkKubernetes() && allHealthy
@@ -44,9 +141,9 @@ func checkStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	if allHealthy {
-		fmt.Println("✅ All tool bindings are reachable")
+		fmt.Println("✅ All systems and tool bindings are healthy")
 	} else {
-		fmt.Println("⚠️  Some tool bindings are unreachable — agents may have limited functionality")
+		fmt.Println("⚠️  Some dependencies or tool bindings are unreachable/missing — agents may have limited functionality")
 	}
 
 	return nil

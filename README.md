@@ -227,6 +227,7 @@ COMMANDS:
   version   Print CLI version
 
 FLAGS:
+  -p, --pipeline  Path to pipeline YAML configuration
   --agent      Agent to run (drift-detector | deploy-reviewer | infra-monitor)
   --brain      Agent brain to use (autogen | langgraph)
   --namespace  Kubernetes namespace to target (default: default)
@@ -235,6 +236,7 @@ FLAGS:
   --verbose    Enable verbose output
 
 EXAMPLES:
+  devops-agent run --pipeline orchestration/pipelines/argocd-agent.yaml
   devops-agent run --agent drift-detector --brain autogen
   devops-agent run --agent deploy-reviewer --brain langgraph --namespace production
   devops-agent run --agent infra-monitor --brain autogen --interval 10m
@@ -289,19 +291,20 @@ git submodule status
 
 ## 🗺️ Roadmap
 
-- [ ] `drift-detector-agent` — initial implementation
-- [ ] `deploy-reviewer-agent` — initial implementation  
-- [ ] `infra-monitor-agent` — initial implementation
-- [ ] Go CLI `run` and `status` commands
-- [ ] Kubernetes tool bindings
-- [ ] ArgoCD tool bindings
-- [ ] Prometheus tool bindings
-- [ ] AutoGen brain config wiring
-- [ ] LangGraph brain config wiring
+- [x] `drift-detector-agent` — initial implementation
+- [x] `deploy-reviewer-agent` — initial implementation  
+- [x] `infra-monitor-agent` — initial implementation
+- [x] Go CLI `run` and `status` commands (including cross-platform resolution and pipeline parsing)
+- [x] Kubernetes tool bindings
+- [x] ArgoCD tool bindings
+- [x] Prometheus tool bindings
+- [x] AutoGen brain config wiring
+- [x] LangGraph brain config wiring
+- [x] Agent result output to Slack (via notifications configuration in pipeline runner)
 - [ ] GitHub Actions workflow for CI
 - [ ] Helm chart for in-cluster deployment
 - [ ] Support for additional brains (CrewAI, OpenAI Swarm)
-- [ ] Agent result output to Slack / PagerDuty
+- [ ] Agent result output to PagerDuty
 
 ---
 

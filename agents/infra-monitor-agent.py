@@ -34,6 +34,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from tools.kubernetes import get_pod_status, get_failing_pods, get_node_pressure
 from tools.prometheus import query_metric, query_range, get_alerts_firing, get_error_rate
+from tools.notifications import send_slack_message
 
 logger = logging.getLogger("infra-monitor-agent")
 
@@ -91,6 +92,15 @@ TOOLS = [
             "service": {"type": "string", "required": True},
             "namespace": {"type": "string", "default": "default"},
             "window": {"type": "string", "default": "5m"},
+        },
+    },
+    {
+        "name": "send_slack_message",
+        "description": "Send a message to a Slack channel using an incoming webhook",
+        "function": send_slack_message,
+        "parameters": {
+            "channel": {"type": "string", "required": True},
+            "text": {"type": "string", "required": True},
         },
     },
 ]
@@ -170,7 +180,7 @@ def parse_interval(interval_str: str) -> int:
 def run_with_autogen(config: dict, namespace: str, dry_run: bool) -> str:
     """Run a single monitoring cycle using AutoGen as the brain."""
     try:
-        from autogen import AssistantAgent, UserProxyAgent
+        from autogen import AssistantAgent, UserProxyAgent  # type: ignore
     except ImportError:
         logger.error(
             "AutoGen not installed. Run: pip install -r agent-brain/autogen/"
@@ -208,16 +218,24 @@ def run_with_autogen(config: dict, namespace: str, dry_run: bool) -> str:
     if dry_run:
         task += " This is a DRY RUN — report findings but take no actions."
 
-    result = user_proxy.initiate_chat(assistant, message=task)
-    return str(result)
+    chat_result = user_proxy.initiate_chat(assistant, message=task)
+    try:
+        if hasattr(chat_result, 'chat_history') and chat_result.chat_history:
+            for msg in reversed(chat_result.chat_history):
+                if msg.get("role") in ("user", "assistant"):
+                    if msg.get("content"):
+                        return msg.get("content")
+        return str(chat_result)
+    except Exception:
+        return str(chat_result)
 
 
 def run_with_langgraph(config: dict, namespace: str, dry_run: bool) -> str:
     """Run a single monitoring cycle using LangGraph as the brain."""
     try:
-        from langchain_core.tools import tool as langchain_tool
-        from langchain_openai import ChatOpenAI
-        from langgraph.prebuilt import create_react_agent
+        from langchain_core.tools import tool as langchain_tool  # type: ignore
+        from langchain_openai import ChatOpenAI  # type: ignore
+        from langgraph.prebuilt import create_react_agent  # type: ignore
     except ImportError:
         logger.error(
             "LangGraph not installed. Run: pip install langgraph langchain-openai"
@@ -288,6 +306,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--verbose", action="store_true", help="Enable verbose logging"
     )
+    parser.add_argument(
+        "--pipeline", default="", help="Path to pipeline YAML configuration"
+    )
     return parser.parse_args()
 
 
@@ -312,6 +333,25 @@ def main() -> None:
 
     run_fn = run_with_autogen if args.brain == "autogen" else run_with_langgraph
 
+    def handle_slack(output_text: str):
+        if args.pipeline:
+            try:
+                pipeline_path = Path(args.pipeline)
+                if pipeline_path.exists():
+                    with open(pipeline_path) as f:
+                        pipeline_data = yaml.safe_load(f)
+                    
+                    pipeline_sec = pipeline_data.get("pipeline", {})
+                    notifications = pipeline_sec.get("notifications", {})
+                    slack_cfg = notifications.get("slack", {})
+                    if slack_cfg.get("enabled", False):
+                        channel = slack_cfg.get("channel", "#alerts")
+                        logger.info("Sending notification to Slack channel %s", channel)
+                        msg_text = f"*Agent:* infra-monitor (Brain: {args.brain})\n*Namespace:* {args.namespace}\n\n{output_text}"
+                        send_slack_message(channel, msg_text)
+            except Exception as exc:
+                logger.error("Failed to send automatic Slack notification: %s", exc)
+
     if args.interval:
         interval_secs = parse_interval(args.interval)
         logger.info(
@@ -327,6 +367,7 @@ def main() -> None:
             try:
                 output = run_fn(config, args.namespace, args.dry_run)
                 print(output)
+                handle_slack(output)
             except Exception:
                 logger.exception("Error in monitoring cycle %d", cycle)
 
@@ -346,6 +387,7 @@ def main() -> None:
         logger.info("Single-run mode — brain=%s", args.brain)
         output = run_fn(config, args.namespace, args.dry_run)
         print(output)
+        handle_slack(output)
 
 
 if __name__ == "__main__":
