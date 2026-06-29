@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 
-ARGOCD_SERVER = os.getenv("ARGOCD_SERVER", "https://localhost:8080")
+ARGOCD_SERVER = os.getenv("ARGOCD_SERVER", "https://localhost:8080").rstrip("/")
 ARGOCD_TOKEN = os.getenv("ARGOCD_AUTH_TOKEN", "")
 ARGOCD_INSECURE = os.getenv("ARGOCD_INSECURE", "false").lower() == "true"
 
@@ -58,10 +58,19 @@ def _get(path: str, params: dict | None = None) -> dict[str, Any]:
             verify=not ARGOCD_INSECURE,
             timeout=10,
         )
+        try:
+            data = resp.json()
+            if isinstance(data, dict) and "message" in data and resp.status_code >= 400:
+                return {"error": data["message"]}
+        except ValueError:
+            pass
+
         resp.raise_for_status()
         return resp.json()
     except requests.RequestException as exc:
         logger.error("ArgoCD API error: %s", exc)
+        if 'resp' in locals() and resp.text:
+            return {"error": f"{exc} - Response: {resp.text}"}
         return {"error": str(exc)}
 
 
@@ -76,10 +85,19 @@ def _post(path: str, json_body: dict | None = None) -> dict[str, Any]:
             verify=not ARGOCD_INSECURE,
             timeout=30,
         )
+        try:
+            data = resp.json()
+            if isinstance(data, dict) and "message" in data and resp.status_code >= 400:
+                return {"error": data["message"]}
+        except ValueError:
+            pass
+
         resp.raise_for_status()
         return resp.json()
     except requests.RequestException as exc:
         logger.error("ArgoCD API error: %s", exc)
+        if 'resp' in locals() and resp.text:
+            return {"error": f"{exc} - Response: {resp.text}"}
         return {"error": str(exc)}
 
 

@@ -70,18 +70,20 @@ def get_pod_status(namespace: str = "default") -> list[dict[str, Any]]:
     for pod in pods.items:
         containers = []
         for cs in pod.status.container_statuses or []:
+            state_str = "unknown"
+            if cs.state:
+                if cs.state.running:
+                    state_str = "running"
+                elif cs.state.waiting:
+                    state_str = "waiting"
+                elif cs.state.terminated:
+                    state_str = "terminated"
             containers.append(
                 {
                     "name": cs.name,
                     "ready": cs.ready,
                     "restart_count": cs.restart_count,
-                    "state": (
-                        "running"
-                        if cs.state.running
-                        else "waiting"
-                        if cs.state.waiting
-                        else "terminated"
-                    ),
+                    "state": state_str,
                 }
             )
 
@@ -123,24 +125,25 @@ def describe_deployment(
         return {"error": str(exc)}
 
     conditions = []
-    for c in dep.status.conditions or []:
-        conditions.append(
-            {
-                "type": c.type,
-                "status": c.status,
-                "reason": c.reason,
-                "message": c.message,
-            }
-        )
+    if dep.status and dep.status.conditions:
+        for c in dep.status.conditions:
+            conditions.append(
+                {
+                    "type": c.type,
+                    "status": c.status,
+                    "reason": c.reason,
+                    "message": c.message,
+                }
+            )
 
     return {
         "name": dep.metadata.name,
         "namespace": dep.metadata.namespace,
         "replicas": {
             "desired": dep.spec.replicas,
-            "ready": dep.status.ready_replicas or 0,
-            "available": dep.status.available_replicas or 0,
-            "unavailable": dep.status.unavailable_replicas or 0,
+            "ready": dep.status.ready_replicas or 0 if dep.status else 0,
+            "available": dep.status.available_replicas or 0 if dep.status else 0,
+            "unavailable": dep.status.unavailable_replicas or 0 if dep.status else 0,
         },
         "strategy": dep.spec.strategy.type if dep.spec.strategy else "Unknown",
         "conditions": conditions,
@@ -172,14 +175,43 @@ def get_failing_pods(namespace: str = "default") -> list[dict[str, Any]]:
     failing = []
 
     for pod in pods.items:
+        is_failing = False
+        reason = ""
+
+        # Check pod phase
         if pod.status.phase not in healthy_phases:
-            reason = ""
+            is_failing = True
             if pod.status.conditions:
                 for cond in pod.status.conditions:
                     if cond.status != "True":
                         reason = f"{cond.type}: {cond.message or cond.reason or 'unknown'}"
                         break
 
+        # Check container statuses for errors (e.g. CrashLoopBackOff, ImagePullBackOff, etc.)
+        if not is_failing and pod.status.container_statuses:
+            for cs in pod.status.container_statuses:
+                if cs.state and cs.state.waiting:
+                    w = cs.state.waiting
+                    if w.reason in {
+                        "CrashLoopBackOff",
+                        "ImagePullBackOff",
+                        "ErrImagePull",
+                        "CreateContainerConfigError",
+                        "CreateContainerError",
+                        "InvalidImageName",
+                        "RunContainerError",
+                    }:
+                        is_failing = True
+                        reason = f"Container {cs.name} in {w.reason}: {w.message or 'no message'}"
+                        break
+                elif cs.state and cs.state.terminated:
+                    t = cs.state.terminated
+                    if t.exit_code != 0:
+                        is_failing = True
+                        reason = f"Container {cs.name} terminated with exit code {t.exit_code}: {t.reason or 'unknown reason'}"
+                        break
+
+        if is_failing:
             failing.append(
                 {
                     "name": pod.metadata.name,
@@ -216,23 +248,25 @@ def get_node_pressure() -> list[dict[str, Any]]:
 
     for node in nodes.items:
         pressures = {}
-        for cond in node.status.conditions or []:
-            if cond.type in pressure_types:
-                pressures[cond.type] = {
-                    "active": cond.status == "True",
-                    "reason": cond.reason,
-                    "message": cond.message,
-                }
+        allocatable = {}
+        if node.status:
+            for cond in node.status.conditions or []:
+                if cond.type in pressure_types:
+                    pressures[cond.type] = {
+                        "active": cond.status == "True",
+                        "reason": cond.reason,
+                        "message": cond.message,
+                    }
+            allocatable = node.status.allocatable or {}
 
-        allocatable = node.status.allocatable or {}
         results.append(
             {
                 "name": node.metadata.name,
                 "pressures": pressures,
                 "allocatable": {
-                    "cpu": allocatable.get("cpu", "unknown"),
-                    "memory": allocatable.get("memory", "unknown"),
-                    "pods": allocatable.get("pods", "unknown"),
+                    "cpu": allocatable.get("cpu", "unknown") if allocatable else "unknown",
+                    "memory": allocatable.get("memory", "unknown") if allocatable else "unknown",
+                    "pods": allocatable.get("pods", "unknown") if allocatable else "unknown",
                 },
             }
         )

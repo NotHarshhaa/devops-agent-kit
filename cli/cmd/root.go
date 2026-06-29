@@ -7,6 +7,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -42,23 +43,35 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Preview agent actions without executing")
 }
 
-// projectRoot walks up from the binary location to find the project root.
+// projectRoot walks up from the binary location or working directory to find the project root.
 // It looks for the "agents" directory as a marker.
 func projectRoot() (string, error) {
-	// Try current working directory first
+	// Check relative to executable location first
+	if execPath, err := os.Executable(); err == nil {
+		execDir := filepath.Dir(execPath)
+		if _, err := os.Stat(filepath.Join(execDir, "agents")); err == nil {
+			return execDir, nil
+		}
+		parentOfExec := filepath.Dir(execDir)
+		if _, err := os.Stat(filepath.Join(parentOfExec, "agents")); err == nil {
+			return parentOfExec, nil
+		}
+	}
+
+	// Fall back to current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("failed to get working directory: %w", err)
 	}
 
 	// Check if agents/ exists relative to cwd (repo root)
-	if _, err := os.Stat(fmt.Sprintf("%s/agents", cwd)); err == nil {
+	if _, err := os.Stat(filepath.Join(cwd, "agents")); err == nil {
 		return cwd, nil
 	}
 
 	// Check parent (for when running from bin/)
-	parent := fmt.Sprintf("%s/..", cwd)
-	if _, err := os.Stat(fmt.Sprintf("%s/agents", parent)); err == nil {
+	parent := filepath.Dir(cwd)
+	if _, err := os.Stat(filepath.Join(parent, "agents")); err == nil {
 		return parent, nil
 	}
 

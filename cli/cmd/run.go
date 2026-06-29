@@ -225,6 +225,7 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	pyCmd.Stderr = os.Stderr
 	pyCmd.Stdin = os.Stdin
 	pyCmd.Dir = root
+	pyCmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
 
 	if err := pyCmd.Run(); err != nil {
 		return fmt.Errorf("agent exited with error: %w", err)

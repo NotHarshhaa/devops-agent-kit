@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 
-PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://localhost:9090").rstrip("/")
 
 
 def _query_api(
@@ -38,13 +38,19 @@ def _query_api(
     url = f"{PROMETHEUS_URL}/api/v1/{endpoint}"
     try:
         resp = requests.get(url, params=params, timeout=10)
+        try:
+            data = resp.json()
+            if isinstance(data, dict) and data.get("status") == "error":
+                return {"error": data.get("error", "Unknown Prometheus error")}
+        except ValueError:
+            pass
+
         resp.raise_for_status()
-        data = resp.json()
-        if data.get("status") != "success":
-            return {"error": data.get("error", "Unknown Prometheus error")}
-        return data
+        return resp.json()
     except requests.RequestException as exc:
         logger.error("Prometheus API error: %s", exc)
+        if 'resp' in locals() and resp.text:
+            return {"error": f"{exc} - Response: {resp.text}"}
         return {"error": str(exc)}
 
 
@@ -98,9 +104,9 @@ def query_range(
         A dict with result type, step used, and the matrix of values.
     """
     now = time.time()
-    if start is None:
+    if start is None or start == "":
         start = now - 3600  # 1 hour ago
-    if end is None:
+    if end is None or end == "":
         end = now
 
     params = {
